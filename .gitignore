@@ -1,0 +1,13 @@
+.gradle/
+.idea/
+.kotlin/
+.hfhome/
+build/
+**/build/
+results/
+__pycache__/
+*.pyc
+local.properties
+*.log
+*.tmp
+*.swp
