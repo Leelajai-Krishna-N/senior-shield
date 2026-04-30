@@ -25,12 +25,12 @@ android {
         applicationId = "com.sjbit.seniorshield"
         minSdk = 27
         targetSdk = 34
-        versionCode = 12
-        versionName = "1.4.1-translation-localread-fix"
+        versionCode = 30
+        versionName = "1.5.17-post-script-processing-alert"
         buildConfigField(
             "String",
             "APP_VERSION_LABEL",
-            "\"SeniorShield v1.4.1-translation-localread-fix\""
+            "\"SeniorShield v1.5.17-post-script-processing-alert\""
         )
         buildConfigField(
             "String",
@@ -41,6 +41,36 @@ android {
             "String",
             "SARVAM_API_KEY",
             "\"${escapeForBuildConfig(localProperties.getProperty("sarvam.api.key", ""))}\""
+        )
+        buildConfigField(
+            "String",
+            "GROQ_API_KEY",
+            "\"${escapeForBuildConfig(localProperties.getProperty("groq.api.key", ""))}\""
+        )
+        buildConfigField(
+            "String",
+            "GROQ_CHAT_MODEL",
+            "\"llama-3.3-70b-versatile\""
+        )
+        buildConfigField(
+            "String",
+            "GROQ_STT_MODEL",
+            "\"whisper-large-v3-turbo\""
+        )
+        buildConfigField(
+            "String",
+            "OPENAI_STT_API_KEY",
+            "\"${escapeForBuildConfig(localProperties.getProperty("openai.stt.api.key", ""))}\""
+        )
+        buildConfigField(
+            "String",
+            "OPENAI_STT_URL",
+            "\"${escapeForBuildConfig(localProperties.getProperty("openai.stt.url", "https://api.openai.com/v1/audio/transcriptions"))}\""
+        )
+        buildConfigField(
+            "String",
+            "OPENAI_STT_MODEL",
+            "\"${escapeForBuildConfig(localProperties.getProperty("openai.stt.model", "whisper-1"))}\""
         )
         buildConfigField(
             "String",

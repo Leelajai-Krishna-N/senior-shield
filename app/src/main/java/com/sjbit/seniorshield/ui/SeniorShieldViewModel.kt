@@ -1,8 +1,13 @@
 package com.sjbit.seniorshield.ui
 
+import android.Manifest
 import android.content.Context
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.sjbit.seniorshield.call.CallGuardRuntime
+import com.sjbit.seniorshield.call.CallGuardService
 import com.sjbit.seniorshield.cloud.HfPhishingClient
 import com.sjbit.seniorshield.cloud.HfPhishingVerdict
 import com.sjbit.seniorshield.cloud.N8nScanClient
@@ -18,10 +23,14 @@ import com.sjbit.seniorshield.platform.SmsAlertSender
 import com.sjbit.seniorshield.platform.VoiceGuide
 import com.sjbit.seniorshield.repo.AnalysisRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -34,6 +43,7 @@ data class SeniorShieldUiState(
     val voiceLanguageTag: String = "hi-IN",
     val appLanguageTag: String = "system",
     val trustedContact: String = "",
+    val trustedCallersCsv: String = "",
     val autoFamilyAlert: Boolean = true,
     val ttsRate: Float = 0.82f,
     val onboardingCompleted: Boolean = false,
@@ -42,7 +52,13 @@ data class SeniorShieldUiState(
     val cloudStatus: String? = null,
     val isCloudChecking: Boolean = false,
     val isAwaitingWebhookFinal: Boolean = false,
-    val activeAlertEvent: AlertEvent? = null
+    val activeAlertEvent: AlertEvent? = null,
+    val callGuardRunning: Boolean = false,
+    val callGuardStatus: String? = null,
+    val liveCallTranscript: String = "",
+    val liveCallDecision: String = "idle",
+    val liveCallConfidence: Int = 0,
+    val liveScamTactics: List<String> = emptyList()
 )
 
 class SeniorShieldViewModel(
@@ -53,11 +69,14 @@ class SeniorShieldViewModel(
     private val hfClient = HfPhishingClient()
     private val n8nClient = N8nScanClient()
     private val preferences = SeniorShieldPreferences(appContext)
+    private var scriptedCallJob: Job? = null
+    private var scriptedPipelineRunning: Boolean = false
     private val _uiState = MutableStateFlow(
         preferences.load().let { settings ->
             SeniorShieldUiState(
                 message = sharedText.orEmpty(),
                 trustedContact = settings.trustedContact,
+                trustedCallersCsv = settings.trustedCallersCsv,
                 voiceLanguageTag = settings.voiceLanguageTag,
                 appLanguageTag = settings.appLanguageTag,
                 autoFamilyAlert = settings.autoFamilyAlert,
@@ -87,6 +106,18 @@ class SeniorShieldViewModel(
                 )
             }
         }
+        viewModelScope.launch {
+            CallGuardRuntime.state().collect { callGuard ->
+                _uiState.value = _uiState.value.copy(
+                    callGuardRunning = callGuard.running,
+                    callGuardStatus = callGuard.status,
+                    liveCallTranscript = callGuard.latestTranscript,
+                    liveCallDecision = callGuard.latestDecision,
+                    liveCallConfidence = callGuard.latestConfidence,
+                    liveScamTactics = callGuard.highlightedTactics
+                )
+            }
+        }
     }
 
     fun updateSender(value: String) {
@@ -100,6 +131,11 @@ class SeniorShieldViewModel(
     fun updateTrustedContact(value: String) {
         preferences.saveTrustedContact(value)
         _uiState.value = _uiState.value.copy(trustedContact = value, alertStatus = null)
+    }
+
+    fun updateTrustedCallersCsv(value: String) {
+        preferences.saveTrustedCallersCsv(value)
+        _uiState.value = _uiState.value.copy(trustedCallersCsv = value, alertStatus = null)
     }
 
     fun setVoiceLanguageTag(value: String) {
@@ -270,7 +306,211 @@ class SeniorShieldViewModel(
         _uiState.value = _uiState.value.copy(activeAlertEvent = null)
     }
 
+    fun startCallGuard() {
+        if (!hasPermission(Manifest.permission.RECORD_AUDIO)) {
+            _uiState.value = _uiState.value.copy(
+                alertStatus = "Allow microphone access to use Call Guard."
+            )
+            return
+        }
+
+        val currentState = _uiState.value
+        ContextCompat.startForegroundService(
+            appContext,
+            CallGuardService.startIntent(
+                context = appContext,
+                voiceLanguageTag = currentState.voiceLanguageTag,
+                appLanguageTag = currentState.appLanguageTag,
+                ttsRate = currentState.ttsRate,
+                trustedCallersCsv = currentState.trustedCallersCsv
+            )
+        )
+        _uiState.value = currentState.copy(
+            callGuardRunning = true,
+            callGuardStatus = "Starting Call Guard..."
+        )
+        startDigitalArrestScriptFlow()
+    }
+
+    fun stopCallGuard() {
+        scriptedCallJob?.cancel()
+        scriptedPipelineRunning = false
+        appContext.startService(CallGuardService.stopIntent(appContext))
+        _uiState.value = _uiState.value.copy(
+            callGuardRunning = false,
+            callGuardStatus = "Call Guard stopped."
+        )
+    }
+
+    private fun startDigitalArrestScriptFlow() {
+        if (scriptedPipelineRunning) return
+        scriptedCallJob?.cancel()
+        scriptedPipelineRunning = true
+        scriptedCallJob = viewModelScope.launch {
+            delay(15_000L)
+            if (!currentCoroutineContext().isActive || !_uiState.value.callGuardRunning) {
+                scriptedPipelineRunning = false
+                return@launch
+            }
+            val lines = listOf(
+                "Hello, this is cyber police from Bengaluru. Your Aadhaar is linked to a criminal case.",
+                "A digital arrest notice is being prepared right now.",
+                "If you disconnect this call, an arrest team will be sent to your home today.",
+                "To stop this, verify your bank accounts and transfer funds for security checking.",
+                "Share OTP now and do not inform anyone, this is a confidential legal process."
+            )
+            val tactics = listOf(
+                "Police impersonation",
+                "Digital arrest threat",
+                "Isolation: asks victim not to tell anyone",
+                "Urgent money transfer demand",
+                "OTP request"
+            )
+            var transcript = ""
+            for ((index, line) in lines.withIndex()) {
+                transcript = if (transcript.isBlank()) line else "$transcript\n$line"
+                CallGuardRuntime.update(
+                    running = true,
+                    status = "Live transcript updated (simulated call lag).",
+                    latestTranscript = transcript,
+                    latestDecision = if (index < lines.lastIndex) "analyzing" else "scam",
+                    latestConfidence = if (index < lines.lastIndex) 0 else 98,
+                    highlightedTactics = if (index < lines.lastIndex) emptyList() else tactics
+                )
+                _uiState.value = _uiState.value.copy(
+                    liveCallTranscript = transcript,
+                    liveCallDecision = if (index < lines.lastIndex) "analyzing" else "scam",
+                    liveCallConfidence = if (index < lines.lastIndex) 0 else 98,
+                    liveScamTactics = if (index < lines.lastIndex) emptyList() else tactics,
+                    callGuardStatus = "Live transcript updated (simulated call lag)."
+                )
+                delay(5_000L)
+                if (!currentCoroutineContext().isActive || !_uiState.value.callGuardRunning) {
+                    scriptedPipelineRunning = false
+                    return@launch
+                }
+            }
+            runPostScriptProcessingAndAlert(transcript, tactics)
+            scriptedPipelineRunning = false
+        }
+    }
+
+    private suspend fun runPostScriptProcessingAndAlert(demoTranscript: String, reasons: List<String>) {
+        if (!currentCoroutineContext().isActive || !_uiState.value.callGuardRunning) return
+
+        updateScriptStatus(
+            status = "Analyzing authority impersonation and threat pattern...",
+            transcript = demoTranscript,
+            decision = "analyzing",
+            confidence = 0,
+            tactics = emptyList()
+        )
+        delay(1_500L)
+        if (!currentCoroutineContext().isActive || !_uiState.value.callGuardRunning) return
+
+        updateScriptStatus(
+            status = "Checking coercion signals (OTP, urgency, payment pressure)...",
+            transcript = demoTranscript,
+            decision = "analyzing",
+            confidence = 0,
+            tactics = emptyList()
+        )
+        delay(1_500L)
+        if (!currentCoroutineContext().isActive || !_uiState.value.callGuardRunning) return
+
+        val voiceSequence = listOf(
+            "Scam risk detected in this call.",
+            "Caller is using police impersonation, fear, and OTP pressure.",
+            "End the call now and alert your family member."
+        )
+        for (line in voiceSequence) {
+            voiceGuide.speak(line, _uiState.value.voiceLanguageTag, _uiState.value.ttsRate)
+            delay(2_200L)
+            if (!currentCoroutineContext().isActive || !_uiState.value.callGuardRunning) return
+        }
+
+        val entry = AnalysisEntry(
+            input = MessageInput(
+                source = MessageSource.MANUAL,
+                sender = "Demo call script",
+                body = demoTranscript,
+                receivedAtLabel = timestamp()
+            ),
+            result = PhishingAnalysisResult(
+                riskLevel = RiskLevel.HIGH_RISK,
+                score = 98,
+                reasons = reasons,
+                plainLanguageExplanation = "High-risk scam call detected. The caller used police impersonation, fear, urgent payment pressure, and OTP request.",
+                suggestedAction = "Do not pay or share OTP. End call and alert family immediately.",
+                containsSuspiciousLink = false,
+                linkAnalyses = emptyList()
+            )
+        )
+
+        var autoAlertStatus = "Demo mode: this is a scripted phishing simulation."
+        val state = _uiState.value
+        if (state.autoFamilyAlert && state.trustedContact.isNotBlank()) {
+            autoAlertStatus = SmsAlertSender.sendFamilyAlert(state.trustedContact, entry).fold(
+                onSuccess = { "Scripted scam warned family at $it." },
+                onFailure = { "Scripted scam confirmed, but family alert could not be sent automatically." }
+            )
+        }
+
+        CallGuardRuntime.update(
+            running = true,
+            status = "Scripted scam confirmed.",
+            latestTranscript = demoTranscript,
+            latestDecision = "scam",
+            latestConfidence = 98,
+            highlightedTactics = reasons
+        )
+
+        _uiState.value = _uiState.value.copy(
+            lastResult = entry,
+            callGuardRunning = true,
+            callGuardStatus = "Scripted scam confirmed.",
+            liveCallTranscript = demoTranscript,
+            liveCallDecision = "scam",
+            liveCallConfidence = 98,
+            liveScamTactics = reasons,
+            activeAlertEvent = AlertEvent(
+                id = System.currentTimeMillis(),
+                entry = entry,
+                autoAlertStatus = autoAlertStatus
+            ),
+            alertStatus = autoAlertStatus
+        )
+
+        voiceGuide.speak(entry.result.plainLanguageExplanation, _uiState.value.voiceLanguageTag, _uiState.value.ttsRate)
+    }
+
+    private fun updateScriptStatus(
+        status: String,
+        transcript: String,
+        decision: String,
+        confidence: Int,
+        tactics: List<String>
+    ) {
+        CallGuardRuntime.update(
+            running = true,
+            status = status,
+            latestTranscript = transcript,
+            latestDecision = decision,
+            latestConfidence = confidence,
+            highlightedTactics = tactics
+        )
+        _uiState.value = _uiState.value.copy(
+            callGuardStatus = status,
+            liveCallTranscript = transcript,
+            liveCallDecision = decision,
+            liveCallConfidence = confidence,
+            liveScamTactics = tactics
+        )
+    }
+
     override fun onCleared() {
+        scriptedCallJob?.cancel()
+        scriptedPipelineRunning = false
         voiceGuide.release()
         super.onCleared()
     }
@@ -426,5 +666,9 @@ class SeniorShieldViewModel(
             appLanguageTag.startsWith("kn", ignoreCase = true) -> "kn-IN"
             else -> voiceLanguageTag
         }
+    }
+
+    private fun hasPermission(permission: String): Boolean {
+        return ContextCompat.checkSelfPermission(appContext, permission) == PackageManager.PERMISSION_GRANTED
     }
 }

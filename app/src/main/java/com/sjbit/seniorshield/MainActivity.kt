@@ -39,7 +39,9 @@ class MainActivity : ComponentActivity() {
         val smsPermissions = listOf(
             Manifest.permission.RECEIVE_SMS,
             Manifest.permission.READ_SMS,
-            Manifest.permission.SEND_SMS
+            Manifest.permission.SEND_SMS,
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.READ_PHONE_STATE
         ).filterNot(::hasPermission)
 
         if (smsPermissions.isNotEmpty()) {

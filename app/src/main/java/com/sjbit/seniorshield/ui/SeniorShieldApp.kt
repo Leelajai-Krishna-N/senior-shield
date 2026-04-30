@@ -109,12 +109,20 @@ fun SeniorShieldApp(viewModel: SeniorShieldViewModel) {
                         sender = uiState.sender,
                         message = uiState.message,
                         trustedContact = uiState.trustedContact,
+                        trustedCallersCsv = uiState.trustedCallersCsv,
                         alertStatus = uiState.alertStatus,
                         cloudStatus = uiState.cloudStatus,
+                        callGuardStatus = uiState.callGuardStatus,
+                        callGuardRunning = uiState.callGuardRunning,
+                        liveCallTranscript = uiState.liveCallTranscript,
+                        liveCallDecision = uiState.liveCallDecision,
+                        liveCallConfidence = uiState.liveCallConfidence,
+                        liveScamTactics = uiState.liveScamTactics,
                         isCloudChecking = uiState.isCloudChecking,
                         onSenderChanged = viewModel::updateSender,
                         onMessageChanged = viewModel::updateMessage,
                         onTrustedContactChanged = viewModel::updateTrustedContact,
+                        onTrustedCallersChanged = viewModel::updateTrustedCallersCsv,
                         onAnalyze = viewModel::analyzeManualMessage,
                         onSpeak = viewModel::speakResult,
                         onSpeakLocal = viewModel::speakResultInLocalLanguage,
@@ -122,6 +130,8 @@ fun SeniorShieldApp(viewModel: SeniorShieldViewModel) {
                         onSpeakFullLocal = viewModel::speakFullMessageInLocalLanguage,
                         onImNotSure = viewModel::runImNotSureCheck,
                         onAlertFamily = viewModel::sendFamilyAlert,
+                        onStartCallGuard = viewModel::startCallGuard,
+                        onStopCallGuard = viewModel::stopCallGuard,
                         t = t
                     )
                 }
@@ -174,11 +184,13 @@ fun SeniorShieldApp(viewModel: SeniorShieldViewModel) {
                     voiceLanguageTag = uiState.voiceLanguageTag,
                     ttsRate = uiState.ttsRate,
                     autoFamilyAlert = uiState.autoFamilyAlert,
+                    trustedCallersCsv = uiState.trustedCallersCsv,
                     onDismiss = { showSettings = false },
                     onAppLanguageChanged = viewModel::setAppLanguageTag,
                     onVoiceLanguageChanged = viewModel::setVoiceLanguageTag,
                     onTtsRateChanged = viewModel::setTtsRate,
                     onToggleAutoFamilyAlert = viewModel::toggleAutoFamilyAlert,
+                    onTrustedCallersChanged = viewModel::updateTrustedCallersCsv,
                     t = t
                 )
             }
@@ -288,11 +300,13 @@ private fun SettingsDialog(
     voiceLanguageTag: String,
     ttsRate: Float,
     autoFamilyAlert: Boolean,
+    trustedCallersCsv: String,
     onDismiss: () -> Unit,
     onAppLanguageChanged: (String) -> Unit,
     onVoiceLanguageChanged: (String) -> Unit,
     onTtsRateChanged: (Float) -> Unit,
     onToggleAutoFamilyAlert: () -> Unit,
+    onTrustedCallersChanged: (String) -> Unit,
     t: AppStrings
 ) {
     AlertDialog(
@@ -309,6 +323,14 @@ private fun SettingsDialog(
                     Text(t.autoAlertFamily, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     Switch(checked = autoFamilyAlert, onCheckedChange = { onToggleAutoFamilyAlert() })
                 }
+                OutlinedTextField(
+                    value = trustedCallersCsv,
+                    onValueChange = onTrustedCallersChanged,
+                    label = { Text(t.trustedCallersLabel) },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2
+                )
+                Text(t.trustedCallersHint, fontSize = 13.sp, color = Color(0xFF4A5568))
             }
         },
         confirmButton = {
@@ -349,12 +371,20 @@ private fun ReviewCard(
     sender: String,
     message: String,
     trustedContact: String,
+    trustedCallersCsv: String,
     alertStatus: String?,
     cloudStatus: String?,
+    callGuardStatus: String?,
+    callGuardRunning: Boolean,
+    liveCallTranscript: String,
+    liveCallDecision: String,
+    liveCallConfidence: Int,
+    liveScamTactics: List<String>,
     isCloudChecking: Boolean,
     onSenderChanged: (String) -> Unit,
     onMessageChanged: (String) -> Unit,
     onTrustedContactChanged: (String) -> Unit,
+    onTrustedCallersChanged: (String) -> Unit,
     onAnalyze: () -> Unit,
     onSpeak: () -> Unit,
     onSpeakLocal: () -> Unit,
@@ -362,6 +392,8 @@ private fun ReviewCard(
     onSpeakFullLocal: () -> Unit,
     onImNotSure: () -> Unit,
     onAlertFamily: () -> Unit,
+    onStartCallGuard: () -> Unit,
+    onStopCallGuard: () -> Unit,
     t: AppStrings
 ) {
     Card(
@@ -391,6 +423,13 @@ private fun ReviewCard(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
+            )
+            OutlinedTextField(
+                value = trustedCallersCsv,
+                onValueChange = onTrustedCallersChanged,
+                label = { Text(t.trustedCallersLabel) },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2
             )
             if (alertStatus != null) {
                 Text(
@@ -469,6 +508,65 @@ private fun ReviewCard(
                     Icon(Icons.Rounded.Call, contentDescription = null)
                     Spacer(modifier = Modifier.padding(6.dp))
                     Text(t.alertFamily, fontSize = 19.sp)
+                }
+            }
+            Text(
+                text = t.callGuardHint,
+                color = Color(0xFF4A5568),
+                fontSize = 15.sp
+            )
+            if (callGuardStatus != null) {
+                Text(
+                    text = callGuardStatus,
+                    color = Color(0xFF183A37),
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            if (callGuardRunning) {
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF4F6FF)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("Live call transcript", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                        Text(
+                            if (liveCallTranscript.isBlank()) "Waiting for speech..." else liveCallTranscript,
+                            fontSize = 15.sp,
+                            color = Color(0xFF1F2937)
+                        )
+                        Text(
+                            "Decision: ${liveCallDecision.uppercase()} ($liveCallConfidence%)",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF374151)
+                        )
+                        if (liveScamTactics.isNotEmpty()) {
+                            Text("Detected tactics:", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            liveScamTactics.take(4).forEach { tactic ->
+                                Text("- $tactic", fontSize = 14.sp, color = Color(0xFF9F1D35))
+                            }
+                        }
+                    }
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(
+                    onClick = if (callGuardRunning) onStopCallGuard else onStartCallGuard,
+                    modifier = Modifier.fillMaxWidth().height(76.dp),
+                    shape = RoundedCornerShape(22.dp)
+                ) {
+                    Icon(Icons.Rounded.Call, contentDescription = null)
+                    Spacer(modifier = Modifier.padding(6.dp))
+                    Text(
+                        if (callGuardRunning) t.stopCallGuard else t.startCallGuard,
+                        fontSize = 21.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
@@ -594,6 +692,8 @@ private data class AppStrings(
     val defaultVoiceLanguage: String,
     val appLanguage: String,
     val autoAlertFamily: String,
+    val trustedCallersLabel: String,
+    val trustedCallersHint: String,
     val checkMessage: String,
     val readAloud: String,
     val readLocal: String,
@@ -616,6 +716,9 @@ private data class AppStrings(
     val whatToDo: String,
     val linkCheck: String,
     val nestedTarget: String,
+    val startCallGuard: String,
+    val stopCallGuard: String,
+    val callGuardHint: String,
     val languageHindi: String,
     val languageKannada: String,
     val languageEnglish: String,
@@ -646,6 +749,8 @@ private fun appStrings(tag: String): AppStrings {
             defaultVoiceLanguage = "\u0921\u093f\u095e\u093e\u0932\u094d\u091f \u0906\u0935\u093e\u095b \u092d\u093e\u0937\u093e",
             appLanguage = "\u0910\u092a \u092d\u093e\u0937\u093e",
             autoAlertFamily = "\u092a\u0930\u093f\u0935\u093e\u0930 \u0915\u094b \u0911\u091f\u094b \u0905\u0932\u0930\u094d\u091f",
+            trustedCallersLabel = "\u0935\u093f\u0936\u094d\u0935\u0938\u0928\u0940\u092f \u0915\u0949\u0932\u0930 (\u0928\u093e\u092e/\u0928\u0902\u092c\u0930, comma \u0938\u0947)",
+            trustedCallersHint = "\u091c\u0948\u0938\u0947 SBI, HDFC, 98765..., Office HR. \u092f\u0947 \u0938\u093f\u0930\u094d\u095e \u0938\u0939\u093e\u092f\u0915 \u0938\u093f\u0917\u094d\u0928\u0932 \u0939\u0948; OTP/PIN \u092e\u093e\u0901\u0917\u0928\u0947 \u092a\u0930 \u0915\u0949\u0932 \u092b\u093f\u0930 \u092d\u0940 \u0916\u0924\u0930\u0928\u093e\u0915 \u092e\u093e\u0928\u0940 \u091c\u093e\u090f\u0917\u0940\u0964",
             checkMessage = "\u0938\u0902\u0926\u0947\u0936 \u091c\u093e\u0901\u091a\u0947\u0902",
             readAloud = "\u0906\u0935\u093e\u095b \u092e\u0947\u0902 \u092a\u095d\u0947\u0902",
             readLocal = "\u0932\u094b\u0915\u0932 \u092e\u0947\u0902 \u092a\u095d\u0947\u0902",
@@ -668,6 +773,9 @@ private fun appStrings(tag: String): AppStrings {
             whatToDo = "\u0905\u092c \u0915\u094d\u092f\u093e \u0915\u0930\u0947\u0902",
             linkCheck = "\u0932\u093f\u0902\u0915 \u091c\u093e\u0901\u091a",
             nestedTarget = "\u0905\u0902\u0926\u0930\u0942\u0928\u0940 \u0932\u0915\u094d\u0937\u094d\u092f",
+            startCallGuard = "\u0915\u0949\u0932 \u0917\u093e\u0930\u094d\u0921 \u0936\u0941\u0930\u0942 \u0915\u0930\u0947\u0902",
+            stopCallGuard = "\u0915\u0949\u0932 \u0917\u093e\u0930\u094d\u0921 \u0930\u094b\u0915\u0947\u0902",
+            callGuardHint = "\u0932\u093e\u0907\u0935 \u0915\u0949\u0932 \u0915\u0947 \u0926\u094c\u0930\u093e\u0928 \u0926\u094b\u0928\u094b\u0902 \u092a\u0915\u094d\u0937 \u0938\u0941\u0928\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f \u0938\u094d\u092a\u0940\u0915\u0930\u092b\u094b\u0928 \u091a\u093e\u0932\u0942 \u0915\u0930\u0947\u0902\u0964",
             languageHindi = "\u0939\u093f\u0928\u094d\u0926\u0940",
             languageKannada = "\u0915\u0928\u094d\u0928\u0921",
             languageEnglish = "\u0905\u0902\u0917\u094d\u0930\u0947\u091c\u093c\u0940",
@@ -684,6 +792,8 @@ private fun appStrings(tag: String): AppStrings {
             defaultVoiceLanguage = "\u0ca1\u0cbf\u0cab\u0cbe\u0cb2\u0ccd\u0c9f\u0ccd \u0c93\u0ca6\u0cc1\u0cb5 \u0cad\u0cbe\u0cb7\u0cc6",
             appLanguage = "\u0c86\u0caa\u0ccd \u0cad\u0cbe\u0cb7\u0cc6",
             autoAlertFamily = "\u0c95\u0cc1\u0c9f\u0cc1\u0c82\u0cac\u0c95\u0ccd\u0c95\u0cc6 \u0cb8\u0ccd\u0cb5\u0caf\u0c82 \u0c85\u0cb2\u0cb0\u0ccd\u0c9f\u0ccd",
+            trustedCallersLabel = "\u0cb5\u0cbf\u0cb6\u0ccd\u0cb5\u0cbe\u0cb8\u0cbe\u0cb0\u0ccd\u0cb9 \u0c95\u0cbe\u0cb2\u0cb0\u0ccd\u200c\u0c97\u0cb3\u0cc1 (hesaru/number, comma inda)",
+            trustedCallersHint = "Udaharane: SBI, HDFC, 98765..., Office HR. Idu sahaya signal matra; OTP/PIN kelidare call apayakariyagi flag agutte.",
             checkMessage = "\u0cb8\u0c82\u0ca6\u0cc7\u0cb6 \u0caa\u0cb0\u0cbf\u0cb6\u0cc0\u0cb2\u0cbf\u0cb8\u0cbf",
             readAloud = "\u0c9c\u0ccb\u0cb0\u0cbe\u0c97\u0cbf \u0c93\u0ca6\u0cbf",
             readLocal = "\u0cb8\u0ccd\u0ca5\u0cb3\u0cc0\u0caf\u0ca6\u0cb2\u0ccd\u0cb2\u0cbf \u0c93\u0ca6\u0cbf",
@@ -706,6 +816,9 @@ private fun appStrings(tag: String): AppStrings {
             whatToDo = "\u0cae\u0cc1\u0c82\u0ca6\u0cc7 \u0c8f\u0ca8\u0cc1 \u0cae\u0cbe\u0ca1\u0cac\u0cc7\u0c95\u0cc1",
             linkCheck = "\u0cb2\u0cbf\u0c82\u0c95\u0ccd \u0caa\u0cb0\u0cbf\u0cb6\u0cc0\u0cb2\u0ca8\u0cc6",
             nestedTarget = "\u0c92\u0cb3\u0c97\u0cbf\u0ca8 \u0c97\u0cc1\u0cb0\u0cbf",
+            startCallGuard = "\u0c95\u0cbe\u0cb2\u0ccd \u0c97\u0cbe\u0cb0\u0ccd\u0ca1\u0ccd \u0cb6\u0cc1\u0cb0\u0cc1 \u0cae\u0cbe\u0ca1\u0cbf",
+            stopCallGuard = "\u0c95\u0cbe\u0cb2\u0ccd \u0c97\u0cbe\u0cb0\u0ccd\u0ca1\u0ccd \u0ca8\u0cbf\u0cb2\u0ccd\u0cb2\u0cbf\u0cb8\u0cbf",
+            callGuardHint = "\u0cb2\u0cc8\u0cb5\u0ccd \u0c95\u0cbe\u0cb2\u0ccd \u0ca6\u0cb5\u0cb0\u0cbf\u0c97\u0cc6 \u0c8e\u0cb0\u0ca1\u0cc2 \u0cac\u0ca6\u0cbf\u0caf \u0ca7\u0ccd\u0cb5\u0ca8\u0cbf \u0c95\u0cc7\u0cb3\u0cb2\u0cc1 \u0cb8\u0ccd\u0caa\u0cc0\u0c95\u0cb0\u0ccd\u0cab\u0ccb\u0ca8\u0ccd \u0c91\u0ca8\u0ccd \u0cae\u0cbe\u0ca1\u0cbf.",
             languageHindi = "\u0cb9\u0cbf\u0c82\u0ca6\u0cc0",
             languageKannada = "\u0c95\u0ca8\u0ccd\u0ca8\u0ca1",
             languageEnglish = "\u0c87\u0c82\u0c97\u0ccd\u0cb2\u0cbf\u0cb7\u0ccd",
@@ -722,6 +835,8 @@ private fun appStrings(tag: String): AppStrings {
             defaultVoiceLanguage = "Default read aloud language",
             appLanguage = "App language",
             autoAlertFamily = "Auto alert family",
+            trustedCallersLabel = "Trusted callers (name/number, comma-separated)",
+            trustedCallersHint = "Example: SBI, HDFC, 98765..., Office HR. Safety rule still applies: OTP/PIN/UPI/remote access requests are treated as high risk.",
             checkMessage = "Check message",
             readAloud = "Read aloud",
             readLocal = "Read local",
@@ -744,6 +859,9 @@ private fun appStrings(tag: String): AppStrings {
             whatToDo = "What to do",
             linkCheck = "Link check",
             nestedTarget = "Nested target",
+            startCallGuard = "Start Call Guard",
+            stopCallGuard = "Stop Call Guard",
+            callGuardHint = "Use speakerphone during a live call so the app microphone can hear both sides.",
             languageHindi = "Hindi",
             languageKannada = "Kannada",
             languageEnglish = "English",
