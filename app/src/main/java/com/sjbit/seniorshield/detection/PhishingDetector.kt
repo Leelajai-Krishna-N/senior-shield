@@ -214,11 +214,7 @@ class PhishingDetector(
             score = score.coerceAtMost(100)
         }
 
-        val riskLevel = when {
-            score >= 55 -> RiskLevel.HIGH_RISK
-            score >= 25 -> RiskLevel.CAUTION
-            else -> RiskLevel.SAFE
-        }
+        val riskLevel = if (score >= 55) RiskLevel.HIGH_RISK else RiskLevel.SAFE
 
         return PhishingAnalysisResult(
             riskLevel = riskLevel,
@@ -240,8 +236,8 @@ class PhishingDetector(
     ): String {
         val intro = when (riskLevel) {
             RiskLevel.HIGH_RISK -> "This message looks dangerous."
-            RiskLevel.CAUTION -> "This message needs caution."
             RiskLevel.SAFE -> "This message looks mostly safe."
+            RiskLevel.CAUTION -> "This message looks mostly safe."
         }
         val linkNote = if (hasLinks) " I also checked the link inside the message." else ""
         val reason = reasons.firstOrNull().orEmpty()
@@ -251,8 +247,8 @@ class PhishingDetector(
     private fun suggestedAction(riskLevel: RiskLevel): String {
         return when (riskLevel) {
             RiskLevel.HIGH_RISK -> "Do not click anything. Ask a family member before taking action."
-            RiskLevel.CAUTION -> "Pause before acting. Verify with the official website or a trusted person."
             RiskLevel.SAFE -> "No major red flags found, but never share OTP or passwords."
+            RiskLevel.CAUTION -> "No major red flags found, but never share OTP or passwords."
         }
     }
 

@@ -25,17 +25,22 @@ android {
         applicationId = "com.sjbit.seniorshield"
         minSdk = 27
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.3.0-ai-train-fallback"
+        versionCode = 12
+        versionName = "1.4.1-translation-localread-fix"
         buildConfigField(
             "String",
             "APP_VERSION_LABEL",
-            "\"SeniorShield v1.3.0-ai-train-fallback\""
+            "\"SeniorShield v1.4.1-translation-localread-fix\""
         )
         buildConfigField(
             "String",
             "HF_API_TOKEN",
             "\"${escapeForBuildConfig(localProperties.getProperty("hf.api.token", ""))}\""
+        )
+        buildConfigField(
+            "String",
+            "SARVAM_API_KEY",
+            "\"${escapeForBuildConfig(localProperties.getProperty("sarvam.api.key", ""))}\""
         )
         buildConfigField(
             "String",
@@ -59,8 +64,28 @@ android {
         )
         buildConfigField(
             "String",
+            "HF_TRANSLATE_EN_KN_MODEL_ID",
+            "\"Helsinki-NLP/opus-mt-en-kn\""
+        )
+        buildConfigField(
+            "String",
+            "HF_TRANSLATE_HI_EN_MODEL_ID",
+            "\"Helsinki-NLP/opus-mt-hi-en\""
+        )
+        buildConfigField(
+            "String",
+            "HF_TRANSLATE_KN_EN_MODEL_ID",
+            "\"Helsinki-NLP/opus-mt-kn-en\""
+        )
+        buildConfigField(
+            "String",
+            "LIVE_MODEL_API_URL",
+            "\"${escapeForBuildConfig(localProperties.getProperty("live.model.api.url", "https://advantage-shots-yea-sustained.trycloudflare.com/predict"))}\""
+        )
+        buildConfigField(
+            "String",
             "N8N_SCAN_WEBHOOK_URL",
-            "\"${escapeForBuildConfig(localProperties.getProperty("n8n.scan.webhook.url", ""))}\""
+            "\"${escapeForBuildConfig(localProperties.getProperty("n8n.scan.webhook.url", "https://iloveyouljk.app.n8n.cloud/webhook-test/9afa4b6c-e8e1-4ec2-8017-635df824a6f2"))}\""
         )
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

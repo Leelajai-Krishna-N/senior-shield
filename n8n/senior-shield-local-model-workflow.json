@@ -1,0 +1,81 @@
+{
+  "name": "SeniorShield Local Model Webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "senior-shield-scan",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "Webhook_1",
+      "name": "Webhook Scan Message",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 280]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body ?? $json;\nconst message = (body.smsBody ?? body.message ?? '').toString().trim();\nif (!message) throw new Error(\"Field 'message' or 'smsBody' is required\");\nconst sender = (body.sender ?? 'UNKNOWN').toString();\nconst preferredUiLanguage = (body.preferredUiLanguage ?? 'en').toString();\nconst preferredVoiceLanguage = (body.preferredVoiceLanguage ?? preferredUiLanguage).toString();\nconst phishingScore = Number(body.phishingScore ?? 0);\nconst modelLabel = (body.modelLabel ?? '').toString();\nconst messageLanguage = (body.messageLanguage ?? detectLanguage(message)).toString();\nconst links = Array.isArray(body.links) ? body.links : [...message.matchAll(/https?:\\/\\/[^\\s]+/gi)].map(m => m[0]);\nreturn [{ json: { sender, message, preferredUiLanguage, preferredVoiceLanguage, phishingScore, modelLabel, messageLanguage, links } }];\nfunction detectLanguage(text) { if (/[\\u0900-\\u097F]/.test(text)) return 'hi'; if (/[\\u0C80-\\u0CFF]/.test(text)) return 'kn'; return 'en'; }"
+      },
+      "id": "Code_1",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 280]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SCAM_MODEL_API_URL || 'https://REPLACE_WITH_PUBLIC_MODEL_API/predict'}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"text\": $json.message}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "HTTP_1",
+      "name": "Call Local Model API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [800, 280]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $items('Normalize Input', 0, 0)[0].json;\nconst api = $json.result ?? {};\nconst phishingProb = Number(api.probabilities?.phishing ?? 0);\nconst confidencePercent = Math.round((Number(api.confidence ?? phishingProb) || 0) * 100);\nconst inheritedScore = Number(input.phishingScore ?? 0);\nconst finalScore = Math.max(confidencePercent, inheritedScore);\nconst isHighRisk = (api.label === 'phishing') || phishingProb >= 0.8 || finalScore >= 80;\nconst verdict = isHighRisk ? 'high_risk' : 'safe';\nconst urgency = /blocked|suspend|urgent|immediately|within \\d+|verify now|kyc|pan|aadhaar|aadhar/i.test(input.message);\nconst hasLink = (input.links || []).length > 0;\nconst indicators = [];\nif (api.label === 'phishing') indicators.push('Local fine-tuned model classified this message as phishing');\nif (hasLink) indicators.push('Message contains one or more links');\nif (urgency) indicators.push('Message uses urgency or identity-verification pressure');\nif (input.modelLabel) indicators.push(`App-side label: ${input.modelLabel}`);\nreturn [{ json: {\n  verdict,\n  finalScore,\n  confidence: confidencePercent,\n  familyAlertRecommended: verdict === 'high_risk',\n  localized: {\n    en: {\n      explanation: verdict === 'high_risk' ? 'This message looks like a scam because it combines risky language, a clickable link, or urgency pressure.' : 'This message looks safe based on the current model result and message context.',\n      action: verdict === 'high_risk' ? 'Do not click the link or reply. Call the official number from the real website or app.' : 'No strong phishing signs were found. Still avoid sharing OTP, PIN, or passwords.'\n    },\n    hi: {\n      explanation: verdict === 'high_risk' ? 'यह संदेश धोखाधड़ी जैसा लग रहा है क्योंकि इसमें खतरनाक भाषा, लिंक या जल्दी कार्रवाई का दबाव है।' : 'मौजूदा मॉडल और संदेश संदर्भ के आधार पर यह संदेश सुरक्षित लगता है।',\n      action: verdict === 'high_risk' ? 'लिंक मत खोलिए और जवाब मत दीजिए। आधिकारिक वेबसाइट या ऐप से सही नंबर लेकर खुद कॉल कीजिए।' : 'कोई मजबूत फ़िशिंग संकेत नहीं मिले। फिर भी OTP, PIN या पासवर्ड साझा मत कीजिए।'\n    },\n    kn: {\n      explanation: verdict === 'high_risk' ? 'ಈ ಸಂದೇಶವು ಮೋಸದಂತಿದೆ, ಏಕೆಂದರೆ ಇದರಲ್ಲಿ ಅಪಾಯಕಾರಿ ಭಾಷೆ, ಲಿಂಕ್ ಅಥವಾ ತುರ್ತು ಒತ್ತಡ ಇದೆ.' : 'ಈಗಿನ ಮಾದರಿ ಮತ್ತು ಸಂದೇಶದ ಸಂದರ್ಭದ ಆಧಾರದ ಮೇಲೆ ಇದು ಸುರಕ್ಷಿತವಾಗಿರುವಂತೆ ಕಾಣುತ್ತದೆ.',\n      action: verdict === 'high_risk' ? 'ಲಿಂಕ್ ತೆರೆಯಬೇಡಿ ಮತ್ತು ಉತ್ತರಿಸಬೇಡಿ. ಅಧಿಕೃತ ವೆಬ್‌ಸೈಟ್ ಅಥವಾ ಆಪ್‌ನ ಸರಿಯಾದ ಸಂಖ್ಯೆಗೆ ನೀವು ಸ್ವತಃ ಕರೆ ಮಾಡಿ.' : 'ಬಲವಾದ ಫಿಷಿಂಗ್ ಸೂಚನೆಗಳು ಕಂಡುಬಂದಿಲ್ಲ. ಆದರೂ OTP, PIN ಅಥವಾ ಪಾಸ್ವರ್ಡ್ ಹಂಚಿಕೊಳ್ಳಬೇಡಿ.'\n    }\n  },\n  evidence: {\n    sender: input.sender,\n    messageLanguage: input.messageLanguage,\n    originalPhishingScore: input.phishingScore,\n    modelLabel: input.modelLabel,\n    links: input.links,\n    indicators\n  }\n}}];"
+      },
+      "id": "Code_2",
+      "name": "Build AI Explanation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1060, 280]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "Respond_1",
+      "name": "Respond JSON",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1310, 280]
+    }
+  ],
+  "connections": {
+    "Webhook Scan Message": { "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]] },
+    "Normalize Input": { "main": [[{ "node": "Call Local Model API", "type": "main", "index": 0 }]] },
+    "Call Local Model API": { "main": [[{ "node": "Build AI Explanation", "type": "main", "index": 0 }]] },
+    "Build AI Explanation": { "main": [[{ "node": "Respond JSON", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "versionId": "senior-shield-local-model-v1"
+}

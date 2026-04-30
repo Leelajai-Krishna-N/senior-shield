@@ -41,13 +41,14 @@ object AnalysisRepository {
         val entry = AnalysisEntry(input = input, result = result)
         entries.value = listOf(entry) + entries.value
         val settings = SeniorShieldPreferences(context).load()
+        val webhookAuthoritative = input.source == MessageSource.SMS && n8nClient.isConfigured()
 
-        if (result.riskLevel != RiskLevel.SAFE) {
+        if (!webhookAuthoritative && input.source == MessageSource.SMS && result.riskLevel != RiskLevel.SAFE) {
             AlertNotifier(context).show(entry)
         }
 
-        if (input.source == MessageSource.SMS && result.riskLevel != RiskLevel.SAFE) {
-            VoiceAlertSpeaker.speak(context, entry.result.plainLanguageExplanation, settings.voiceLanguageTag)
+        if (!webhookAuthoritative && input.source == MessageSource.SMS && result.riskLevel != RiskLevel.SAFE) {
+            VoiceAlertSpeaker.speak(context, entry.result.plainLanguageExplanation, settings.voiceLanguageTag, settings.ttsRate)
             val autoAlertStatus = if (
                 settings.autoFamilyAlert &&
                 settings.trustedContact.isNotBlank() &&
@@ -73,6 +74,8 @@ object AnalysisRepository {
                 val verdict = hfClient.classify(input.body) ?: return@launch
                 var finalEntry = mergeWithCloud(entry, verdict)
                 val confirmedPhishing = isConfirmedPhishing(verdict, finalEntry)
+                var usedRemoteExplanation = false
+                var remoteApplied = false
 
                 if (confirmedPhishing && n8nClient.isConfigured()) {
                     val remote = n8nClient.scan(
@@ -80,19 +83,40 @@ object AnalysisRepository {
                         preferredUiLanguage = settings.appLanguageTag,
                         preferredVoiceLanguage = settings.voiceLanguageTag,
                         trigger = "auto_sms_phishing",
-                        phishingScore = finalEntry.result.score,
+                        phishingScore = (verdict.phishingProbability * 100).toInt(),
                         messageLanguage = detectLanguage(input.body),
                         modelLabel = verdict.label
                     )
                     if (remote != null) {
-                        finalEntry = mergeWithRemote(finalEntry, remote)
+                        finalEntry = if (webhookAuthoritative) {
+                            entry.copy(
+                                result = entry.result.copy(
+                                    riskLevel = remote.riskLevel,
+                                    score = remote.finalScore,
+                                    reasons = (entry.result.reasons + remote.indicators.map { "AI layer: $it" }).distinct(),
+                                    plainLanguageExplanation = if (remote.explanation.isNotBlank()) remote.explanation else entry.result.plainLanguageExplanation,
+                                    suggestedAction = if (remote.suggestedAction.isNotBlank()) remote.suggestedAction else entry.result.suggestedAction
+                                )
+                            )
+                        } else {
+                            mergeWithRemote(finalEntry, remote)
+                        }
+                        usedRemoteExplanation = remote.explanation.isNotBlank()
+                        remoteApplied = true
                     }
                 }
 
-                if (finalEntry.result.riskLevel > entry.result.riskLevel) {
+                val shouldUpdateEntry = if (webhookAuthoritative) {
+                    remoteApplied
+                } else {
+                    finalEntry.result.riskLevel > entry.result.riskLevel || usedRemoteExplanation
+                }
+                if (shouldUpdateEntry) {
                     entries.value = listOf(finalEntry) + entries.value.filterNot { it === entry }
-                    AlertNotifier(context).show(finalEntry)
-                    VoiceAlertSpeaker.speak(context, finalEntry.result.plainLanguageExplanation, settings.voiceLanguageTag)
+                    if (finalEntry.result.riskLevel == RiskLevel.HIGH_RISK && (!webhookAuthoritative || remoteApplied)) {
+                        AlertNotifier(context).show(finalEntry)
+                        VoiceAlertSpeaker.speak(context, finalEntry.result.plainLanguageExplanation, settings.voiceLanguageTag, settings.ttsRate)
+                    }
 
                     val autoAlertStatus = if (
                         settings.autoFamilyAlert &&
@@ -107,11 +131,17 @@ object AnalysisRepository {
                         null
                     }
 
-                    activeAlert.value = AlertEvent(
-                        id = System.currentTimeMillis(),
-                        entry = finalEntry,
-                        autoAlertStatus = autoAlertStatus
-                    )
+                    activeAlert.value = if (finalEntry.result.riskLevel == RiskLevel.HIGH_RISK) {
+                        AlertEvent(
+                            id = System.currentTimeMillis(),
+                            entry = finalEntry,
+                            autoAlertStatus = autoAlertStatus
+                        )
+                    } else {
+                        null
+                    }
+                } else if (webhookAuthoritative) {
+                    activeAlert.value = null
                 }
             }
         }
@@ -131,9 +161,9 @@ object AnalysisRepository {
         val mergedReasons = localEntry.result.reasons.toMutableList().apply {
             add(
                 when (verdict.riskLevel) {
-                    RiskLevel.HIGH_RISK -> "Hugging Face phishing model flagged this message as phishing (${(verdict.confidence * 100).toInt()}% confidence)."
-                    RiskLevel.CAUTION -> "Hugging Face phishing model found suspicious patterns (${(verdict.confidence * 100).toInt()}% confidence)."
-                    RiskLevel.SAFE -> "Hugging Face phishing model marked this as benign (${(verdict.confidence * 100).toInt()}% confidence)."
+                    RiskLevel.HIGH_RISK -> "AI phishing model flagged this message as phishing (${(verdict.confidence * 100).toInt()}% confidence)."
+                    RiskLevel.CAUTION -> "AI phishing model found suspicious patterns (${(verdict.confidence * 100).toInt()}% confidence)."
+                    RiskLevel.SAFE -> "AI phishing model marked this as benign (${(verdict.confidence * 100).toInt()}% confidence)."
                 }
             )
         }.distinct()
@@ -141,7 +171,7 @@ object AnalysisRepository {
         return localEntry.copy(
             result = localEntry.result.copy(
                 riskLevel = mergedRisk,
-                score = maxOf(localEntry.result.score, (verdict.confidence * 100).toInt()),
+                score = maxOf(localEntry.result.score, (verdict.phishingProbability * 100).toInt()),
                 reasons = mergedReasons,
                 plainLanguageExplanation = when (mergedRisk) {
                     RiskLevel.HIGH_RISK -> "This message looks dangerous. Cloud and local checks found strong warning signs."
@@ -178,6 +208,7 @@ object AnalysisRepository {
     private fun isConfirmedPhishing(verdict: HfPhishingVerdict, entry: AnalysisEntry): Boolean {
         val labelLower = verdict.label.lowercase()
         return verdict.riskLevel == RiskLevel.HIGH_RISK ||
+            verdict.phishingProbability >= 0.4f ||
             labelLower.contains("phishing") ||
             entry.result.riskLevel == RiskLevel.HIGH_RISK
     }

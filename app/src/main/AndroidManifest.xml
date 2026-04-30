@@ -11,7 +11,8 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@android:drawable/ic_dialog_alert"
+        android:icon="@drawable/senior_shield_logo"
+        android:roundIcon="@drawable/senior_shield_logo"
         android:label="Senior Shield"
         android:supportsRtl="true"
         android:theme="@style/Theme.SeniorShield">

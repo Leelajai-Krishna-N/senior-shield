@@ -11,7 +11,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 class N8nScanClient(
-    private val linkInspector: LinkInspector = LinkInspector()
+    private val linkInspector: LinkInspector = LinkInspector(),
+    private val translator: HfTranslationClient = HfTranslationClient()
 ) {
     fun isConfigured(): Boolean = BuildConfig.N8N_SCAN_WEBHOOK_URL.isNotBlank()
 
@@ -59,9 +60,18 @@ class N8nScanClient(
         }.getOrNull()
     }
 
-    private fun parseResponse(body: String, preferredUiLanguage: String): RemoteScanResult? {
+    private suspend fun parseResponse(body: String, preferredUiLanguage: String): RemoteScanResult? {
         if (body.isBlank()) return null
+        val trimmedBody = body.trim()
+        if (trimmedBody.startsWith("[")) {
+            return parseArrayResponse(trimmedBody, preferredUiLanguage)
+        }
+        if (!trimmedBody.startsWith("{")) {
+            return parsePlainTextResponse(trimmedBody, preferredUiLanguage)
+        }
+
         val obj = JSONObject(body)
+        val finalDecision = parseWebhookFinalDecision(obj)
         val localized = obj.optJSONObject("localized")
         val selected = localized?.optJSONObject(preferredUiLanguage)
             ?: localized?.optJSONObject("en")
@@ -81,28 +91,100 @@ class N8nScanClient(
             }
         }
 
+        val explanation = selected?.optString("explanation").orEmpty().ifBlank {
+            obj.optString("explanation", "Deep scan finished, but did not return a clear explanation.")
+        }
+        val suggestedAction = selected?.optString("action").orEmpty().ifBlank {
+            obj.optString("suggestedAction", "Pause before acting and verify with a trusted person.")
+        }
+
+        val resolvedRisk = finalDecision?.let { if (it) RiskLevel.HIGH_RISK else RiskLevel.SAFE } ?: RiskLevel.SAFE
+
+        val translatedIndicators = indicators
+            .filter { it.isNotBlank() }
+            .map { translateForUi(it, preferredUiLanguage) }
+
         return RemoteScanResult(
-            riskLevel = parseRiskLevel(obj.optString("verdict")),
+            riskLevel = resolvedRisk,
             finalScore = obj.optInt("finalScore", obj.optInt("score", 0)),
             confidence = obj.optInt("confidence", 0),
-            explanation = selected?.optString("explanation").orEmpty().ifBlank {
-                obj.optString("explanation", "Deep scan finished, but did not return a clear explanation.")
-            },
-            suggestedAction = selected?.optString("action").orEmpty().ifBlank {
-                obj.optString("suggestedAction", "Pause before acting and verify with a trusted person.")
-            },
-            indicators = indicators.filter { it.isNotBlank() },
-            familyAlertRecommended = obj.optBoolean("familyAlertRecommended", false),
+            explanation = translateForUi(explanation, preferredUiLanguage),
+            suggestedAction = translateForUi(suggestedAction, preferredUiLanguage),
+            indicators = translatedIndicators,
+            familyAlertRecommended = resolvedRisk == RiskLevel.HIGH_RISK,
             sourceLabel = "n8n"
         )
     }
 
-    private fun parseRiskLevel(value: String): RiskLevel {
-        return when (value.lowercase()) {
-            "phishing", "high_risk", "high-risk" -> RiskLevel.HIGH_RISK
-            "caution", "suspicious" -> RiskLevel.CAUTION
-            else -> RiskLevel.SAFE
+    private suspend fun parseArrayResponse(body: String, preferredUiLanguage: String): RemoteScanResult {
+        val array = JSONArray(body)
+        val first = array.optJSONObject(0)
+        val output = first?.optString("output").orEmpty().ifBlank { body }
+        return parsePlainTextResponse(output, preferredUiLanguage)
+    }
+
+    private suspend fun parsePlainTextResponse(body: String, preferredUiLanguage: String): RemoteScanResult {
+        val lower = body.lowercase()
+        val first3 = lower.take(3)
+        val isScam = when {
+            first3 == "yes" -> true
+            lower.startsWith("no") -> false
+            else -> false
         }
+        val explanation = body.trim()
+        val action = if (isScam) {
+            "Do not click links or share OTP. Verify with a trusted family member."
+        } else {
+            "Message marked safe by webhook. Stay careful and never share OTP or PIN."
+        }
+        return RemoteScanResult(
+            riskLevel = if (isScam) RiskLevel.HIGH_RISK else RiskLevel.SAFE,
+            finalScore = if (isScam) 99 else 10,
+            confidence = if (isScam) 99 else 90,
+            explanation = translateForUi(explanation, preferredUiLanguage),
+            suggestedAction = translateForUi(action, preferredUiLanguage),
+            indicators = listOf(
+                translateForUi(
+                    "Webhook text decision: ${if (isScam) "YES" else "NO"}",
+                    preferredUiLanguage
+                )
+            ),
+            familyAlertRecommended = isScam,
+            sourceLabel = "n8n"
+        )
+    }
+
+    private suspend fun translateForUi(text: String, preferredUiLanguage: String): String {
+        if (text.isBlank() || preferredUiLanguage == "en") return text
+        return translator.translate(text, preferredUiLanguage) ?: text
+    }
+
+    private fun parseWebhookFinalDecision(obj: JSONObject): Boolean? {
+        if (obj.has("isScam")) {
+            return obj.optBoolean("isScam")
+        }
+        if (obj.has("isSafe")) {
+            return !obj.optBoolean("isSafe")
+        }
+
+        val candidateFields = listOf(
+            obj.optString("output"),
+            obj.optString("finalDecision"),
+            obj.optString("decision"),
+            obj.optString("result"),
+            obj.optString("verdict"),
+            obj.optString("message"),
+            obj.optString("explanation")
+        )
+
+        for (field in candidateFields) {
+            val value = field.trim().lowercase()
+            if (value.length < 3) continue
+            val first3 = value.take(3)
+            if (first3 == "yes") return true
+            if (value.startsWith("no")) return false
+        }
+        return null
     }
 
     private fun normalizeLanguage(tag: String): String {
