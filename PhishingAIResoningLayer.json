@@ -1,0 +1,146 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "9afa4b6c-e8e1-4ec2-8017-635df824a6f2",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "f74f5dfd-8467-4867-b639-f1167fd3fe6e",
+      "name": "Webhook",
+      "webhookId": "9afa4b6c-e8e1-4ec2-8017-635df824a6f2"
+    },
+    {
+      "parameters": {
+        "promptType": "=define",
+        "text": "=sender:{{$json.body.sender}} message{{ $json.body.message }}\nBefore giving any answer start with \"Yes\" if its a phishing or a scam else \"No\".",
+        "options": {
+          "systemMessage": "=You are a scam and phishing detection expert . You analyse the given content and decide that if the content is phishing / scom or not . If the content is scam explain clear and consicely why is this a phishing or a scam attempt . Your explaination should be consise and clear because you are explainig it to an elderly indian citizen.\nBefore giving any answer start with \"Yes\" if its a phishing or a scam else \"No\" and always give reasoning for the recieved input."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        224,
+        -16
+      ],
+      "id": "67e8f624-7e96-49a6-b2ba-5a37ab1d5c7d",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-20b:free",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        304,
+        224
+      ],
+      "id": "d265721d-4a1b-472a-9425-c9becde2b397",
+      "name": "OpenRouter Chat Model",
+      "credentials": {
+        "openRouterApi": {
+          "id": "hRXUCr5od7weh75X",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        800,
+        0
+      ],
+      "id": "aa99a8da-8be5-4cf6-b0bf-ec7e6d0a3db2",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "acc1b8c9-187f-41cc-a495-ea1c25d38a03",
+              "name": "output",
+              "value": "={{ $json.output }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        576,
+        0
+      ],
+      "id": "1879c6b2-dace-4d89-b688-ee3a11af9bbf",
+      "name": "Edit Fields"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ee3a6efde5a2a8fed233ce22c6e3384a35c218545cd6f6dd88e53a2e404cebf5"
+  }
+}
