@@ -1,0 +1,627 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "readStatus": "unread"
+        },
+        "options": {}
+      },
+      "id": "99864764-0e75-4985-973e-3f41284a9fbd",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        240,
+        304
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "c4r2YtkQVlNutUvf",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "subject",
+              "value": "={{ $json.headers.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "body",
+              "value": "={{ $json.text || $json.html }}",
+              "type": "string"
+            },
+            {
+              "id": "3",
+              "name": "from",
+              "value": "={{ $json.from }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c21b9e90-af07-4d06-81d1-9c94e58cbc69",
+      "name": "Extract Email Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        464,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const sender = $input.item.json.from || \"\";\nlet score = 0;\n\nif (!sender.includes(\"noreply\")) score += 0.1;\nif (sender.match(/\\.xyz|\\.top|\\.click/)) score += 0.4;\nif (sender.includes(\"secure\") || sender.includes(\"verify\")) score += 0.2;\n\nreturn { ...($input.item.json), sender_score: score };"
+      },
+      "id": "585329c9-6a54-4667-a496-1f3b66313254",
+      "name": "Sender Trust Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.urls[0] }}",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "maxRedirects": 5
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "105b747d-3242-456d-afe3-b5cd3f391174",
+      "name": "Follow Redirects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2032,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const finalUrl = $input.item.json.request?.uri?.href || \"\";\nreturn { ...($input.item.json), final_url: finalUrl };"
+      },
+      "id": "c4953288-0b81-4186-989f-d791eb1f5e51",
+      "name": "Extract Final URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2256,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const url = $input.item.json.final_url || \"\";\nlet score = 0;\n\nif (url.match(/\\.(xyz|top|click|loan)/)) score += 0.4;\nif (url.match(/\\d+\\.\\d+\\.\\d+\\.\\d+/)) score += 0.4;\nif (url.includes(\"login\") || url.includes(\"verify\")) score += 0.2;\n\nreturn { ...($input.item.json), link_score: score };"
+      },
+      "id": "22cbec1a-4e51-4da6-b036-75969e685c42",
+      "name": "Link Risk Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const subject = $(\"Gmail Trigger\").item.json.headers.subject || \"\";\nconst body = $(\"Gmail Trigger\").item.json.text || \"\";\nconst text = (subject + \" \" + body).toLowerCase();\n\nlet score = 0;\n\nif (text.includes(\"urgent\") || text.includes(\"immediately\")) score += 0.3;\nif (text.includes(\"otp\") || text.includes(\"password\")) score += 0.3;\nif (text.includes(\"bank\") || text.includes(\"account\")) score += 0.2;\n\nreturn { ...($input.item.json), behavior_score: score };"
+      },
+      "id": "0f1d21c8-9711-46c1-8ddb-3f327b5d6691",
+      "name": "Behavior Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2704,
+        376
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const mlConfidence = $input.item.json.result?.confidence || 0;\nconst mlLabel = $input.item.json.result?.label || \"\";\n\nconst final_score =\n  0.4 * (mlLabel === \"phishing\" ? mlConfidence : 0) +\n  0.2 * ($input.item.json.link_score || 0) +\n  0.2 * ($input.item.json.sender_score || 0) +\n  0.2 * ($input.item.json.behavior_score || 0);\n\nreturn {\n  ...($input.item.json),\n  final_score,\n  is_scam: final_score > 0.5 || (mlLabel === \"phishing\" && mlConfidence > 0.7)\n};"
+      },
+      "id": "7068a43f-4c72-4d78-8cd7-621b9224a726",
+      "name": "Final Scoring Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2928,
+        376
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1",
+              "leftValue": "={{ $json.is_scam }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "596497ca-1654-4479-a760-9de1cfaf17bb",
+      "name": "Check if Scam",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3152,
+        376
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1",
+              "leftValue": "={{ $json.urls.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "22c4e67c-fcf6-4a40-9f6f-1a38e2c12ebb",
+      "name": "Check URLs Exist",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1808,
+        376
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ \"Email Subject: \" + $('Gmail Trigger').item.json.headers.subject + \"\\n\\nEmail Body: \" + $('Gmail Trigger').item.json.text+ \"\\n\\nRisk Score: \" + $json.final_score + \"\\n\\nSender Risk: \" + $json.sender_score + \"\\nLink Risk: \" + ($json.link_score || 0) + \"\\nBehavior Risk: \" + $json.behavior_score + \"\\n\\nPlease explain in simple terms why this email is a scam or phishing attempt. Use language that an elderly person can easily understand. Be clear and concise.\" }}",
+        "options": {
+          "systemMessage": "You are a helpful cybersecurity assistant who explains email scams and phishing attempts in simple, clear language for elderly people. Focus on the specific red flags in the email and explain why they indicate a scam. Keep your explanation concise and easy to understand."
+        }
+      },
+      "id": "e6c715b8-d11e-4ce4-aa19-95fb0d36d8c1",
+      "name": "Explain Scam",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        3376,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-20b:free",
+        "options": {}
+      },
+      "id": "7f935340-fcd6-4a5b-bb56-96608b22af58",
+      "name": "OpenRouter Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        3448,
+        528
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "id": "hRXUCr5od7weh75X",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  {\n    json: {\n      inputs: ($json.subject || '') + ' ' + ($json.body || '').replace(/\\n/g, ' ').replace(/\\r/g, ' ').slice(0, 1000),\n      options: {\n        wait_for_model: true\n      }\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        304
+      ],
+      "id": "e7db4749-0fbe-4b19-8d14-e0ef84a01f2f",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://advantage-shots-yea-sustained.trycloudflare.com/predict",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "={{ $json.inputs }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1136,
+        304
+      ],
+      "id": "d4d96b31-7a82-43af-a466-175abd33732b",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "functionCode": "const explanation = $json.output || $json.text || \"No explanation available.\";\n\nconst html = `\n<h2>⚠️ Scam Detection Alert</h2>\n\n<p><b>Risk Score:</b> ${$json.final_score}</p>\n\n<h3>📧 Email Details</h3>\n<p><b>Subject:</b> ${$('Gmail Trigger').item.json.headers.subject}</p>\n<p><b>From:</b> ${$('Gmail Trigger').item.json.headers.from}</p>\n\n<h3>📊 Risk Breakdown</h3>\n<ul>\n  <li><b>Sender Risk:</b> ${$json.sender_score}</li>\n  <li><b>Link Risk:</b> ${$json.link_score || 0}</li>\n  <li><b>Behavior Risk:</b> ${$json.behavior_score}</li>\n</ul>\n\n<h3>🧠 Explanation</h3>\n<p>${explanation}</p>\n\n<hr>\n<p style=\"color:gray;font-size:12px;\">Generated by AI Scam Detection System</p>\n`;\n\nreturn [{ ...$json, html }];"
+      },
+      "id": "e0c3f558-1ea4-4076-bbd1-18f5398a86d1",
+      "name": "Convert to HTML",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        3728,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "gowdadishanth2002@gmail.com",
+        "subject": "⚠️ Scam Alert Detected",
+        "message": "={{ $json.html }}",
+        "options": {}
+      },
+      "id": "6cf111e1-2db6-4c42-8154-079dd0c63404",
+      "name": "Send Alert Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        3952,
+        304
+      ],
+      "webhookId": "e7f6f6cb-b739-4470-8cd0-28b307918f29",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "c4r2YtkQVlNutUvf",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "messageId": "={{ $('Gmail Trigger').item.json.id }}"
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        4176,
+        304
+      ],
+      "id": "fa08ba60-629f-4cb7-9a66-4e1b7dc9c967",
+      "name": "Delete a message",
+      "webhookId": "4c191ba4-446e-4001-8861-c9206fa318ae",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "c4r2YtkQVlNutUvf",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the original email body from Gmail Trigger\nconst emailBody = $(\"Gmail Trigger\").item.json.text || \"\";\n\n// Extract URLs (handles normal + <...>)\nconst regex = /(https?:\\/\\/[^\\s<>\"]+|www\\.[^\\s<>\"]+)/gi;\nconst matches = emailBody.match(regex) || [];\n\n// Clean URLs\nconst urls = matches.map(url =>\n  url\n    .replace(/^<|>$/g, \"\")        // remove < >\n    .replace(/[.,)\\]]+$/, \"\")     // remove trailing punctuation\n);\n\n// Deduplicate\nconst uniqueUrls = [...new Set(urls)];\n\n// Return proper n8n format (Code node style)\nreturn [{\n  ...$json,\n  urls: uniqueUrls\n}];"
+      },
+      "id": "9b4d4f48-b21d-435e-8b83-d7970164f930",
+      "name": "Extract URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        376
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1",
+              "leftValue": "={{ $json.result.predicted_index }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2e69aace-b82c-4b08-a857-a83d17f25fa3",
+      "name": "Check ML Phishing",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1360,
+        304
+      ]
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Email Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Email Data": {
+      "main": [
+        [
+          {
+            "node": "Sender Trust Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sender Trust Check": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Follow Redirects": {
+      "main": [
+        [
+          {
+            "node": "Extract Final URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Final URL": {
+      "main": [
+        [
+          {
+            "node": "Link Risk Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Link Risk Analysis": {
+      "main": [
+        [
+          {
+            "node": "Behavior Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Behavior Analysis": {
+      "main": [
+        [
+          {
+            "node": "Final Scoring Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Scoring Engine": {
+      "main": [
+        [
+          {
+            "node": "Check if Scam",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Scam": {
+      "main": [
+        [
+          {
+            "node": "Explain Scam",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check URLs Exist": {
+      "main": [
+        [
+          {
+            "node": "Follow Redirects",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Behavior Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Explain Scam": {
+      "main": [
+        [
+          {
+            "node": "Convert to HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Explain Scam",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Check ML Phishing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to HTML": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Alert Email": {
+      "main": [
+        [
+          {
+            "node": "Delete a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract URLs": {
+      "main": [
+        [
+          {
+            "node": "Check URLs Exist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check ML Phishing": {
+      "main": [
+        [
+          {
+            "node": "Explain Scam",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ee3a6efde5a2a8fed233ce22c6e3384a35c218545cd6f6dd88e53a2e404cebf5"
+  }
+}
